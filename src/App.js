@@ -131,7 +131,14 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [audioUrl, setAudioUrl] = useState(null);
+  const [aiAudioUrl, setAiAudioUrl] = useState(null);
+  const [isAiAudioLoading, setIsAiAudioLoading] = useState(false);
+  const [aiAudioStatusMessage, setAiAudioStatusMessage] = useState(
+    "Upload and wait for AI audio generation."
+  ); // New state for messages
+
   const chunksRef = useRef([]);
+  const pollingIntervalRef = useRef(null);
 
   const startRecording = async () => {
     try {
@@ -144,6 +151,10 @@ export default function App() {
         const url = URL.createObjectURL(blob);
         setAudioUrl(url);
         chunksRef.current = [];
+        setAiAudioUrl(null);
+        setIsAiAudioLoading(false);
+        setAiAudioStatusMessage("Upload and wait for AI audio generation."); // Reset message
+        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       };
 
       recorder.start();
@@ -184,45 +195,107 @@ export default function App() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await axios.post("http://localhost:3001/upload", formData, {
+      setIsAiAudioLoading(true);
+      setAiAudioUrl(null); // Clear previous AI audio
+      setAiAudioStatusMessage("Uploading audio..."); // New message
+
+      // Upload to backend
+      await axios.post("https://alj-poc-backend.onrender.com/upload", formData, {
         headers: {
           "Content-Type": "multipart/form-data",
         },
       });
-      alert(res.data);
+
+      setAiAudioStatusMessage(
+        "Upload successful. Waiting for AI processing to start (this might take a minute)..."
+      );
+
+      // Start polling for AI audio status after upload is confirmed
+      startPollingForAiAudio();
     } catch (err) {
       console.error(err);
-      alert("Upload failed");
+      alert("Upload failed. Check console for details.");
+      setIsAiAudioLoading(false);
+      setAiAudioStatusMessage("Upload failed."); // New message
     }
   };
+
+  const startPollingForAiAudio = () => {
+    if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+
+    pollingIntervalRef.current = setInterval(async () => {
+      try {
+        // You need to create this new endpoint in your backend
+        const res = await axios.get("https://alj-poc-backend.onrender.com/ai-audio-status");
+        const { isProcessing, isReady } = res.data;
+
+        if (isProcessing) {
+          setAiAudioStatusMessage("AI is processing your audio... ⏳");
+        } else if (isReady) {
+          setAiAudioStatusMessage("AI audio ready! ▶️");
+          // Fetch the AI generated audio binary
+          const audioRes = await axios.get("https://alj-poc-backend.onrender.com/audio-binary", {
+            responseType: "arraybuffer", // Important for binary data
+          });
+          const blob = new Blob([audioRes.data], { type: "audio/mpeg" });
+          const url = URL.createObjectURL(blob);
+          setAiAudioUrl(url);
+          setIsAiAudioLoading(false);
+          clearInterval(pollingIntervalRef.current); // Stop polling
+        } else {
+          // This state might occur if no job is active or initial delay
+          setAiAudioStatusMessage("Waiting for AI processing to begin...");
+        }
+      } catch (err) {
+        console.error("Polling error:", err);
+        setAiAudioStatusMessage("Error checking AI audio status.");
+        setIsAiAudioLoading(false);
+        clearInterval(pollingIntervalRef.current); // Stop polling on error
+      }
+    }, 12000); // Poll every 5 seconds
+  };
+
+  const clearHistory = async ()=>{
+    try {
+      const clearUrl = "https://alj-poc-backend.onrender.com/file";
+      const response = await axios.delete(clearUrl);
+      if (response.status === 200) {
+        setAudioUrl(null);
+        setAiAudioUrl(null);
+        setIsAiAudioLoading(false);
+        setAiAudioStatusMessage("Upload and wait for AI audio generation.");
+        alert("History cleared successfully!");
+      } else {
+        alert("Failed to clear history.");
+      }
+    } catch (error) {
+      console.error("Error clearing jistory:",error);
+    }
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-blue-50 p-6">
       <div className="bg-white shadow-xl rounded-3xl p-8 max-w-lg w-full text-center">
-        {/* Logo + Title */}
+        {/* Logos and title */}
         <div className="relative mb-6">
-  {/* Top Left Logo */}
-  <img
-    src="/novigologo.png"
-    alt="Company Logo Left"
-    className="absolute top-0 left-0 w-24 h-auto"
-  />
-
-  {/* Top Right Logo */}
-  <img
-    src="/logo-abdul-latif-jameel.png"
-    alt="Company Logo Right"
-    className="absolute top-0 right-0 w-24 h-auto"
-  />
+          <img
+            src="/novigologo.png"
+            alt="Company Logo Left"
+            className="absolute top-0 left-0 w-24 h-auto"
+          />
+          <img
+            src="/logo-abdul-latif-jameel.png"
+            alt="Company Logo Right"
+            className="absolute top-0 right-0 w-24 h-auto"
+          />
           <div className="flex justify-center pt-16">
-    <h1 className="text-3xl font-extrabold text-blue-800 flex items-center gap-2">
-      <MicrophoneIcon className="h-8 w-8 text-blue-600" />
-      Voice Recorder
-    </h1>
-  </div>
-  </div>
+            <h1 className="text-3xl font-extrabold text-blue-800 flex items-center gap-2">
+              <MicrophoneIcon className="h-8 w-8 text-blue-600" />
+              Voice Recorder
+            </h1>
+          </div>
+        </div>
 
-        {/* Status text */}
         <p
           className={`mb-5 font-semibold ${
             isRecording ? "text-red-600" : "text-blue-700"
@@ -232,7 +305,6 @@ export default function App() {
           {isRecording ? "Recording... 🎙️" : "Click the mic to start recording"}
         </p>
 
-        {/* Buttons */}
         <div className="flex items-center justify-center gap-5 flex-wrap mb-10">
           {!isRecording ? (
             <button
@@ -286,7 +358,6 @@ export default function App() {
           )}
         </div>
 
-        {/* User Recorded Audio Card */}
         {audioUrl && (
           <section className="mb-8 p-5 border border-blue-300 rounded-2xl shadow-sm bg-blue-50">
             <h2 className="text-xl font-bold text-blue-700 flex items-center gap-2 mb-3">
@@ -294,8 +365,7 @@ export default function App() {
               Your Recorded Audio
             </h2>
             <p className="text-blue-600 mb-3 text-sm">
-              This is the audio you recorded. You can play, download, or upload
-              it.
+              This is the audio you recorded. You can play, download, or upload it.
             </p>
             <audio
               controls
@@ -306,8 +376,8 @@ export default function App() {
           </section>
         )}
 
-        {/* AI Generated Audio Card */}
-        { audioUrl &&  <section className="p-5 border border-green-300 rounded-2xl shadow-sm bg-green-50">
+        {audioUrl && (
+          <section className="p-5 border border-green-300 rounded-2xl shadow-sm bg-green-50">
             <h2 className="text-xl font-bold text-green-700 flex items-center gap-2 mb-3">
               <CpuChipIcon className="h-6 w-6 text-green-600" />
               AI-Assistant Audio
@@ -315,18 +385,44 @@ export default function App() {
             <p className="text-green-600 mb-3 text-sm">
               This audio is generated by our AI agents based on your input.
             </p>
-            <audio
-              controls
-              className="w-full rounded-lg border border-green-300 shadow-inner"
-            >
-              <source
-                src="http://localhost:3001/audio-binary"
-                type="audio/mpeg"
+
+            {isAiAudioLoading ? (
+              <div className="text-green-700 font-semibold">
+                {aiAudioStatusMessage}
+              </div>
+            ) : aiAudioUrl ? (
+              <audio
+                controls
+                className="w-full rounded-lg border border-green-300 shadow-inner"
+                src={aiAudioUrl}
+                aria-label="AI generated audio playback"
               />
-              Your browser does not support the audio element.
-            </audio>
-          </section>}
+            ) : (
+              <div className="text-green-700 font-semibold">
+                {aiAudioStatusMessage}
+              </div>
+            )}
+          </section>
+        )}
+
+{aiAudioUrl && <button
+      onClick={clearHistory}
+      className="mt-4 bg-red-600 hover:bg-red-700 focus:ring-4 focus:ring-red-300 text-white px-4 py-2 rounded shadow-lg transition"
+      aria-label="Clear History"
+      title="Clear History"
+    >
+      Clear History
+    </button>}
+ <div className="mt-6 flex justify-center items-center">
+        <p className="text-sm text-gray-500 font-medium mr-2">Powered by</p>
+        <img
+          src="/databricks-logo.png" // Replace with the correct path to the Databricks logo
+          alt="Databricks Logo"
+          className="h-10"
+        />
       </div>
+      </div>
+     
     </div>
   );
 }
