@@ -135,7 +135,9 @@ export default function App() {
   const [isAiAudioLoading, setIsAiAudioLoading] = useState(false);
   const [aiAudioStatusMessage, setAiAudioStatusMessage] = useState(
     "Upload and wait for AI audio generation."
-  ); // New state for messages
+  );
+  // New state for controlling conversation start
+  const [isConversationStarted, setIsConversationStarted] = useState(false);
 
   const chunksRef = useRef([]);
   const pollingIntervalRef = useRef(null);
@@ -153,13 +155,15 @@ export default function App() {
         chunksRef.current = [];
         setAiAudioUrl(null);
         setIsAiAudioLoading(false);
-        setAiAudioStatusMessage("Upload and wait for AI audio generation."); // Reset message
+        setAiAudioStatusMessage("Upload and wait for AI audio generation.");
         if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       };
 
       recorder.start();
       setMediaRecorder(recorder);
       setIsRecording(true);
+      // Set conversation started to true when recording begins
+      setIsConversationStarted(true);
     } catch (err) {
       alert("Could not start recording. Please allow microphone access.");
       console.error(err);
@@ -196,10 +200,9 @@ export default function App() {
       formData.append("file", file);
 
       setIsAiAudioLoading(true);
-      setAiAudioUrl(null); // Clear previous AI audio
-      setAiAudioStatusMessage("Uploading audio..."); // New message
+      setAiAudioUrl(null);
+      setAiAudioStatusMessage("Uploading audio...");
 
-      // Upload to backend
       await axios.post("https://alj-poc-backend.onrender.com/upload", formData, {
         headers: {
           "Content-Type": "multipart/form-data",
@@ -210,13 +213,12 @@ export default function App() {
         "Upload successful. Waiting for AI processing to start (this might take a minute)..."
       );
 
-      // Start polling for AI audio status after upload is confirmed
       startPollingForAiAudio();
     } catch (err) {
       console.error(err);
       alert("Upload failed. Check console for details.");
       setIsAiAudioLoading(false);
-      setAiAudioStatusMessage("Upload failed."); // New message
+      setAiAudioStatusMessage("Upload failed.");
     }
   };
 
@@ -225,7 +227,6 @@ export default function App() {
 
     pollingIntervalRef.current = setInterval(async () => {
       try {
-        // You need to create this new endpoint in your backend
         const res = await axios.get("https://alj-poc-backend.onrender.com/ai-audio-status");
         const { isProcessing, isReady } = res.data;
 
@@ -233,29 +234,27 @@ export default function App() {
           setAiAudioStatusMessage("AI is processing your audio... ⏳");
         } else if (isReady) {
           setAiAudioStatusMessage("AI audio ready! ▶️");
-          // Fetch the AI generated audio binary
           const audioRes = await axios.get("https://alj-poc-backend.onrender.com/audio-binary", {
-            responseType: "arraybuffer", // Important for binary data
+            responseType: "arraybuffer",
           });
           const blob = new Blob([audioRes.data], { type: "audio/mpeg" });
           const url = URL.createObjectURL(blob);
           setAiAudioUrl(url);
           setIsAiAudioLoading(false);
-          clearInterval(pollingIntervalRef.current); // Stop polling
+          clearInterval(pollingIntervalRef.current);
         } else {
-          // This state might occur if no job is active or initial delay
           setAiAudioStatusMessage("Waiting for AI processing to begin...");
         }
       } catch (err) {
         console.error("Polling error:", err);
         setAiAudioStatusMessage("Error checking AI audio status.");
         setIsAiAudioLoading(false);
-        clearInterval(pollingIntervalRef.current); // Stop polling on error
+        clearInterval(pollingIntervalRef.current);
       }
-    }, 12000); // Poll every 5 seconds
+    }, 12000);
   };
 
-  const clearHistory = async ()=>{
+  const clearHistory = async () => {
     try {
       const clearUrl = "https://alj-poc-backend.onrender.com/file";
       const response = await axios.delete(clearUrl);
@@ -264,14 +263,23 @@ export default function App() {
         setAiAudioUrl(null);
         setIsAiAudioLoading(false);
         setAiAudioStatusMessage("Upload and wait for AI audio generation.");
+        // Set conversation started to false after clearing history
+        setIsConversationStarted(false);
         alert("History cleared successfully!");
       } else {
         alert("Failed to clear history.");
       }
     } catch (error) {
-      console.error("Error clearing jistory:",error);
+      console.error("Error clearing history:", error);
     }
-  }
+  };
+
+  const handleStartConversation = () => {
+    setIsConversationStarted(true);
+    clearHistory()
+    // Optionally, you can immediately start recording here if that's the desired flow
+    // startRecording();
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-blue-50 p-6">
@@ -296,133 +304,152 @@ export default function App() {
           </div>
         </div>
 
-        <p
-          className={`mb-5 font-semibold ${
-            isRecording ? "text-red-600" : "text-blue-700"
-          }`}
-          aria-live="polite"
-        >
-          {isRecording ? "Recording... 🎙️" : "Click the mic to start recording"}
-        </p>
-
-        <div className="flex items-center justify-center gap-5 flex-wrap mb-10">
-          {!isRecording ? (
+        {!isConversationStarted ? (
+          // Display "Start Conversation" button if conversation hasn't started
+          <div className="mb-5">
             <button
-              onClick={startRecording}
-              className="bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 text-white p-4 rounded-full shadow-lg transition"
-              aria-label="Start Recording"
-              title="Start Recording"
+              onClick={handleStartConversation}
+              className="bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 text-white font-bold py-3 px-6 rounded-full shadow-lg transition text-xl"
+              aria-label="Start New Conversation"
+              title="Start New Conversation"
             >
-              <MicrophoneIcon className="h-7 w-7" />
+              Start Conversation
             </button>
-          ) : (
-            <button
-              onClick={stopRecording}
-              className="bg-red-600 hover:bg-red-700 focus:ring-4 focus:ring-red-300 text-white p-4 rounded-full shadow-lg transition"
-              aria-label="Stop Recording"
-              title="Stop Recording"
+          </div>
+        ) : (
+          // Display recording and audio playback controls if conversation has started
+          <>
+            <p
+              className={`mb-5 font-semibold ${
+                isRecording ? "text-red-600" : "text-blue-700"
+              }`}
+              aria-live="polite"
             >
-              <StopCircleIcon className="h-7 w-7" />
-            </button>
-          )}
-
-          {audioUrl && (
-            <>
-              <button
-                onClick={() => new Audio(audioUrl).play()}
-                className="bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 text-white p-4 rounded-full shadow-lg transition"
-                aria-label="Play Recorded Audio"
-                title="Play Recorded Audio"
-              >
-                <PlayCircleIcon className="h-7 w-7" />
-              </button>
-
-              <button
-                onClick={downloadRecording}
-                className="bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 text-white p-4 rounded-full shadow-lg transition"
-                aria-label="Download Recorded Audio"
-                title="Download Recorded Audio"
-              >
-                <ArrowDownCircleIcon className="h-7 w-7" />
-              </button>
-
-              <button
-                onClick={uploadThroughBackend}
-                className="bg-green-600 hover:bg-green-700 focus:ring-4 focus:ring-green-300 text-white p-4 rounded-full shadow-lg transition"
-                aria-label="Upload Recorded Audio"
-                title="Upload Recorded Audio"
-              >
-                Upload
-              </button>
-            </>
-          )}
-        </div>
-
-        {audioUrl && (
-          <section className="mb-8 p-5 border border-blue-300 rounded-2xl shadow-sm bg-blue-50">
-            <h2 className="text-xl font-bold text-blue-700 flex items-center gap-2 mb-3">
-              <UserCircleIcon className="h-6 w-6 text-blue-600" />
-              Your Recorded Audio
-            </h2>
-            <p className="text-blue-600 mb-3 text-sm">
-              This is the audio you recorded. You can play, download, or upload it.
-            </p>
-            <audio
-              controls
-              src={audioUrl}
-              className="w-full rounded-lg border border-blue-300 shadow-inner"
-              aria-label="User recorded audio playback"
-            />
-          </section>
-        )}
-
-        {audioUrl && (
-          <section className="p-5 border border-green-300 rounded-2xl shadow-sm bg-green-50">
-            <h2 className="text-xl font-bold text-green-700 flex items-center gap-2 mb-3">
-              <CpuChipIcon className="h-6 w-6 text-green-600" />
-              AI-Assistant Audio
-            </h2>
-            <p className="text-green-600 mb-3 text-sm">
-              This audio is generated by our AI agents based on your input.
+              {isRecording ? "Recording... 🎙️" : "Click the mic to start recording"}
             </p>
 
-            {isAiAudioLoading ? (
-              <div className="text-green-700 font-semibold">
-                {aiAudioStatusMessage}
-              </div>
-            ) : aiAudioUrl ? (
-              <audio
-                controls
-                className="w-full rounded-lg border border-green-300 shadow-inner"
-                src={aiAudioUrl}
-                aria-label="AI generated audio playback"
-              />
-            ) : (
-              <div className="text-green-700 font-semibold">
-                {aiAudioStatusMessage}
-              </div>
+            <div className="flex items-center justify-center gap-5 flex-wrap mb-10">
+              {!isRecording ? (
+                <button
+                  onClick={startRecording}
+                  className="bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 text-white p-4 rounded-full shadow-lg transition"
+                  aria-label="Start Recording"
+                  title="Start Recording"
+                >
+                  <MicrophoneIcon className="h-7 w-7" />
+                </button>
+              ) : (
+                <button
+                  onClick={stopRecording}
+                  className="bg-red-600 hover:bg-red-700 focus:ring-4 focus:ring-red-300 text-white p-4 rounded-full shadow-lg transition"
+                  aria-label="Stop Recording"
+                  title="Stop Recording"
+                >
+                  <StopCircleIcon className="h-7 w-7" />
+                </button>
+              )}
+
+              {audioUrl && (
+                <>
+                  <button
+                    onClick={() => new Audio(audioUrl).play()}
+                    className="bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 text-white p-4 rounded-full shadow-lg transition"
+                    aria-label="Play Recorded Audio"
+                    title="Play Recorded Audio"
+                  >
+                    <PlayCircleIcon className="h-7 w-7" />
+                  </button>
+
+                  <button
+                    onClick={downloadRecording}
+                    className="bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 text-white p-4 rounded-full shadow-lg transition"
+                    aria-label="Download Recorded Audio"
+                    title="Download Recorded Audio"
+                  >
+                    <ArrowDownCircleIcon className="h-7 w-7" />
+                  </button>
+
+                  <button
+                    onClick={uploadThroughBackend}
+                    className="bg-green-600 hover:bg-green-700 focus:ring-4 focus:ring-green-300 text-white p-4 rounded-full shadow-lg transition"
+                    aria-label="Upload Recorded Audio"
+                    title="Upload Recorded Audio"
+                  >
+                    Upload
+                  </button>
+                </>
+              )}
+            </div>
+
+            {audioUrl && (
+              <section className="mb-8 p-5 border border-blue-300 rounded-2xl shadow-sm bg-blue-50">
+                <h2 className="text-xl font-bold text-blue-700 flex items-center gap-2 mb-3">
+                  <UserCircleIcon className="h-6 w-6 text-blue-600" />
+                  Your Recorded Audio
+                </h2>
+                <p className="text-blue-600 mb-3 text-sm">
+                  This is the audio you recorded. You can play, download, or upload it.
+                </p>
+                <audio
+                  controls
+                  src={audioUrl}
+                  className="w-full rounded-lg border border-blue-300 shadow-inner"
+                  aria-label="User recorded audio playback"
+                />
+              </section>
             )}
-          </section>
+
+            {audioUrl && (
+              <section className="p-5 border border-green-300 rounded-2xl shadow-sm bg-green-50">
+                <h2 className="text-xl font-bold text-green-700 flex items-center gap-2 mb-3">
+                  <CpuChipIcon className="h-6 w-6 text-green-600" />
+                  AI-Assistant Audio
+                </h2>
+                <p className="text-green-600 mb-3 text-sm">
+                  This audio is generated by our AI agents based on your input.
+                </p>
+
+                {isAiAudioLoading ? (
+                  <div className="text-green-700 font-semibold">
+                    {aiAudioStatusMessage}
+                  </div>
+                ) : aiAudioUrl ? (
+                  <audio
+                    controls
+                    className="w-full rounded-lg border border-green-300 shadow-inner"
+                    src={aiAudioUrl}
+                    aria-label="AI generated audio playback"
+                  />
+                ) : (
+                  <div className="text-green-700 font-semibold">
+                    {aiAudioStatusMessage}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {aiAudioUrl && (
+              <button
+                onClick={setIsConversationStarted(false)}
+                className="mt-4 bg-red-600 hover:bg-red-700 focus:ring-4 focus:ring-red-300 text-white px-4 py-2 rounded shadow-lg transition"
+                aria-label="Clear History"
+                title="Clear History"
+              >
+                Clear History
+              </button>
+            )}
+          </>
         )}
 
-{aiAudioUrl && <button
-      onClick={clearHistory}
-      className="mt-4 bg-red-600 hover:bg-red-700 focus:ring-4 focus:ring-red-300 text-white px-4 py-2 rounded shadow-lg transition"
-      aria-label="Clear History"
-      title="Clear History"
-    >
-      Clear History
-    </button>}
- <div className="mt-6 flex justify-center items-center">
-        <p className="text-sm text-gray-500 font-medium mr-2">Powered by</p>
-        <img
-          src="/databricks-logo.png" // Replace with the correct path to the Databricks logo
-          alt="Databricks Logo"
-          className="h-10"
-        />
+        <div className="mt-6 flex justify-center items-center">
+          <p className="text-sm text-gray-500 font-medium mr-2">Powered by</p>
+          <img
+            src="/databricks-logo.png"
+            alt="Databricks Logo"
+            className="h-10"
+          />
+        </div>
       </div>
-      </div>
-     
     </div>
   );
 }
